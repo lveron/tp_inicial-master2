@@ -1,0 +1,44 @@
+# Usar imagen oficial de Python
+FROM python:3.11-slim
+
+# Establecer directorio de trabajo
+WORKDIR /app
+
+# Instalar dependencias del sistema necesarias
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    libfontconfig1 \
+    libice6 \
+    libgcc-s1 \
+    cmake \
+    build-essential \
+    libgtk-3-0 \
+    libavcodec58 \
+    libavformat58 \
+    libswscale5 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements primero (para aprovechar cache de Docker)
+COPY requirements.txt .
+
+# Actualizar pip y instalar wheel
+RUN pip install --upgrade pip setuptools wheel
+
+# Instalar dependencias de Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Crear directorios necesarios
+RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
+
+# Copiar todo el proyecto
+COPY . .
+
+# Exponer puerto
+EXPOSE 8000
+
+# Comando para Flask con gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]

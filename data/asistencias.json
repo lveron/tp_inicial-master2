@@ -1,0 +1,114 @@
+[
+  {
+    "legajo": "1409494564",
+    "tipo": "Ingreso",
+    "turno": "Ma\u00c3\u00b1ana",
+    "estado": "puntual",
+    "timestamp": "2025-08-28 08:00:00"
+  },
+  {
+    "legajo": "1409494564",
+    "tipo": "Egreso",
+    "turno": "Ma\u00c3\u00b1ana",
+    "estado": "puntual",
+    "timestamp": "2025-08-28 16:00:00"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Ingreso",
+    "turno": "Tarde",
+    "estado": "puntual",
+    "timestamp": "2025-08-28 14:00:00"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "turno": "Tarde",
+    "estado": "puntual",
+    "timestamp": "2025-08-28 22:00:00"
+  },
+  {
+    "legajo": "12345678",
+    "tipo": "Ingreso",
+    "turno": "Ma\u00c3\u00b1ana",
+    "estado": "puntual",
+    "timestamp": "2025-08-28 06:30:00"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Ingreso",
+    "turno": "ma\u00c3\u00b1ana",
+    "estado": "tarde",
+    "timestamp": "2025-08-28 23:57:00"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "turno": "ma\u00c3\u00b1ana",
+    "estado": "temprano",
+    "timestamp": "2025-08-29 13:34:00"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Ingreso",
+    "timestamp": "2025-08-29 14:32:02",
+    "turno": "maniana",
+    "estado": "temprano"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "timestamp": "2025-08-29 19:16:51",
+    "turno": "maniana",
+    "estado": "Desconocido"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Ingreso",
+    "timestamp": "2025-08-29 19:27:52",
+    "turno": "maniana",
+    "estado": "turno desconocido"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "timestamp": "2025-08-29 19:35:10",
+    "turno": "Noche",
+    "estado": "turno desconocido"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Ingreso",
+    "timestamp": "2025-08-29 19:49:14",
+    "turno": "noche",
+    "estado": "fuera de turno"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "timestamp": "2025-08-29 19:55:42",
+    "turno": "noche",
+    "estado": "fuera de turno"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Ingreso",
+    "timestamp": "2025-08-29 19:58:29",
+    "turno": "noche",
+    "estado": "fuera de turno"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "timestamp": "2025-08-29 20:07:27",
+    "turno": "noche",
+    "estado": "temprano"
+  },
+  {
+    "legajo": "44095446",
+    "tipo": "Egreso",
+    "timestamp": "2025-08-29 20:09:45",
+    "turno": "noche",
+    "estado": "tarde"
+  }
+]
