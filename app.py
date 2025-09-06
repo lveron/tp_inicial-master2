@@ -2,7 +2,7 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, date
 import cv2
 import numpy as np
 
@@ -302,6 +302,109 @@ def listar_empleados():
     except Exception as e:
         logger.error(f"Error al listar empleados: {str(e)}")
         return jsonify({"exito": False, "mensaje": "Error interno del servidor"}), 500
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard_data():
+    """Endpoint que devuelve datos para el dashboard"""
+    try:
+        if DATABASE_MANAGER_DISPONIBLE:
+            # Obtener datos desde PostgreSQL
+            from models.database import get_db_session, Empleado, Asistencia
+            session = get_db_session()
+            if session:
+                try:
+                    # Contar empleados totales
+                    total_empleados = session.query(Empleado).count()
+                    
+                    # Contar asistencias de hoy
+                    hoy = date.today().strftime("%Y-%m-%d")
+                    asistencias_hoy = session.query(Asistencia).filter(
+                        Asistencia.fecha == hoy
+                    ).count()
+                    
+                    # Empleados por turno
+                    empleados_manana = session.query(Empleado).filter(
+                        Empleado.turno == "mañana"
+                    ).count()
+                    empleados_tarde = session.query(Empleado).filter(
+                        Empleado.turno == "tarde"
+                    ).count()
+                    empleados_noche = session.query(Empleado).filter(
+                        Empleado.turno == "noche"
+                    ).count()
+                    
+                    # Obtener asistencias de los últimos 7 días
+                    from datetime import datetime, timedelta
+                    hace_7_dias = datetime.now() - timedelta(days=7)
+                    
+                    asistencias_semana = []
+                    for i in range(7):
+                        fecha_consulta = (hace_7_dias + timedelta(days=i)).strftime("%Y-%m-%d")
+                        count = session.query(Asistencia).filter(
+                            Asistencia.fecha == fecha_consulta
+                        ).count()
+                        asistencias_semana.append({
+                            "fecha": fecha_consulta,
+                            "count": count
+                        })
+                    
+                    session.close()
+                    
+                    return jsonify({
+                        "exito": True,
+                        "totalEmpleados": total_empleados,
+                        "asistenciasHoy": asistencias_hoy,
+                        "empleadosPorTurno": {
+                            "mañana": empleados_manana,
+                            "tarde": empleados_tarde,
+                            "noche": empleados_noche
+                        },
+                        "asistenciasSemana": asistencias_semana,
+                        "fuente": "PostgreSQL"
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error consultando PostgreSQL: {e}")
+                    session.close()
+                    
+        # Si no hay PostgreSQL, usar datos simulados basados en JSON
+        base = cargar_base_empleados()
+        total_empleados = len(base)
+        
+        # Contar por turnos desde JSON
+        turnos = {"mañana": 0, "tarde": 0, "noche": 0}
+        for empleado_data in base.values():
+            turno = empleado_data.get("turno", "").lower()
+            if turno in turnos:
+                turnos[turno] += 1
+        
+        # Datos simulados para la semana
+        asistencias_semana = []
+        from datetime import datetime, timedelta
+        for i in range(7):
+            fecha = (datetime.now() - timedelta(days=6-i)).strftime("%Y-%m-%d")
+            # Simular datos basados en número de empleados
+            count = max(1, total_empleados // 2 + (i % 3))
+            asistencias_semana.append({
+                "fecha": fecha,
+                "count": count
+            })
+        
+        return jsonify({
+            "exito": True,
+            "totalEmpleados": total_empleados,
+            "asistenciasHoy": max(1, total_empleados // 2),
+            "empleadosPorTurno": turnos,
+            "asistenciasSemana": asistencias_semana,
+            "fuente": "JSON/Simulado"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error en dashboard: {str(e)}")
+        return jsonify({
+            "exito": False,
+            "mensaje": "Error obteniendo datos del dashboard"
+        }), 500
 
 @app.route("/asistencias/<legajo>", methods=["GET"])
 def obtener_asistencias(legajo):
