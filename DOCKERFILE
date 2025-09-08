@@ -1,53 +1,27 @@
-# Usar imagen con Miniconda preinstalada
-FROM continuumio/miniconda3:latest
+FROM python:3.11-slim
 
-# Configurar entorno
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
 
-# Instalar dependencias del sistema
+# Instalar solo las dependencias mínimas necesarias
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    libx11-6 \
-    libxext6 \
-    libxrender1 \
     libgl1-mesa-glx \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear entorno conda con Python 3.11
-RUN conda create -n faceapp python=3.11 -y
-SHELL ["conda", "run", "-n", "faceapp", "/bin/bash", "-c"]
-
-# Instalar dependencias con conda (más confiable para librerías científicas)
-RUN conda install -y \
-    numpy=1.24.3 \
-    opencv \
-    cmake \
-    -c conda-forge
-
-# Instalar dlib y face_recognition con pip en el entorno conda  
-RUN pip install dlib==19.24.2
-RUN pip install face_recognition==1.3.0
-
-# Establecer directorio de trabajo
-WORKDIR /app
-
-# Copiar requirements (sin las librerías problemáticas)
+# Copiar requirements
 COPY requirements.txt .
 
-# Instalar el resto de dependencias
-RUN pip install flask flask-cors gunicorn psycopg2-binary sqlalchemy pillow requests python-dateutil
+# Instalar dependencias Python
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Crear directorios
+# Crear directorios necesarios
 RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
 
 # Copiar aplicación
 COPY . .
 
-# Exponer puerto
 EXPOSE 8080
 
-# Usar conda run para ejecutar la aplicación
-CMD ["conda", "run", "-n", "faceapp", "gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
+
