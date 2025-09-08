@@ -32,11 +32,12 @@ except ImportError as e:
 
 # Importaciones condicionales para evitar crashes
 try:
-    from generarEmbedinng import generar_embedding
-    EMBEDDING_DISPONIBLE = True
-except ImportError as e:
-    logger.warning(f"No se pudo importar generarEmbedding: {e}")
-    EMBEDDING_DISPONIBLE = False
+    from generarEmbedinng import generar_embedding, reconocer_empleado
+    RECONOCIMIENTO_DISPONIBLE = True
+    print("INFO: Reconocimiento facial con MediaPipe cargado")
+except Exception as e:
+    RECONOCIMIENTO_DISPONIBLE = False
+    print(f"WARNING: Error cargando reconocimiento: {e}")
 
 try:
     from persistencia.registrarAsistencia import RegistrarAsistencias
