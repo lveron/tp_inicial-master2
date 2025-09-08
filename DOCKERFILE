@@ -1,48 +1,83 @@
-# Usar imagen oficial de Python
-FROM python:3.11-slim
+# Usar imagen base con más librerías preinstaladas
+FROM python:3.11-bullseye
 
 # Establecer directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias
+# Actualizar lista de paquetes e instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxrender1 \
-    libxext6 \
-    libfontconfig1 \
-    libice6 \
-    libgcc-s1 \
-    cmake \
     build-essential \
+    cmake \
     pkg-config \
-    libx11-dev \
     libx11-6 \
+    libx11-dev \
+    libxext6 \
+    libxext-dev \
+    libxrender1 \
+    libxrender-dev \
+    libsm6 \
+    libsm-dev \
+    libice6 \
+    libice-dev \
+    libfontconfig1 \
+    libfontconfig1-dev \
+    libxcb1 \
     libxcb1-dev \
+    libxau6 \
     libxau-dev \
+    libxdmcp6 \
     libxdmcp-dev \
-    x11-common \
+    libglib2.0-0 \
+    libglib2.0-dev \
+    libgtk-3-0 \
+    libgtk-3-dev \
+    libgl1-mesa-glx \
+    libgl1-mesa-dev \
+    libgles2-mesa-dev \
+    libegl1-mesa-dev \
+    libgbm1 \
+    libasound2 \
+    libasound2-dev \
+    libpulse0 \
+    libpulse-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements primero (para aprovechar cache de Docker)
+# Configurar variables de entorno para X11
+ENV DISPLAY=:99
+ENV QT_X11_NO_MITSHM=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Copiar requirements
 COPY requirements.txt .
 
-# Actualizar pip y instalar wheel
+# Actualizar pip e instalar dependencias
 RUN pip install --upgrade pip setuptools wheel
 
-# Instalar dependencias de Python
+# Instalar dependencias Python paso a paso para mejor debugging
+RUN pip install --no-cache-dir numpy==1.24.3
+RUN pip install --no-cache-dir opencv-python-headless==4.8.1.78
+RUN pip install --no-cache-dir dlib-bin==19.24.6
+RUN pip install --no-cache-dir face-recognition==1.3.0
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Crear directorios necesarios
 RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
 
-# Copiar todo el proyecto
+# Copiar el código de la aplicación
 COPY . .
 
 # Exponer puerto
 EXPOSE 8080
 
-# Comando para Flask con gunicorn
+# Comando de inicio
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
