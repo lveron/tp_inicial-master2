@@ -1,237 +1,188 @@
-import logging
+import psycopg2
 import json
 import os
 from datetime import datetime
-from models.database import (
-    DATABASE_AVAILABLE, Empleado, Asistencia, 
-    get_db_session, create_tables
-)
-
-logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self):
-        self.use_postgresql = DATABASE_AVAILABLE
-        if self.use_postgresql:
-            # Crear tablas e inicializar PostgreSQL
-            create_tables()
-            self._migrar_desde_json_si_necesario()
-        logger.info(f"DatabaseManager inicializado - PostgreSQL: {self.use_postgresql}")
-    
-    def _migrar_desde_json_si_necesario(self):
-        """Migra datos desde JSON a PostgreSQL si es la primera vez"""
-        if not self.use_postgresql:
-            return
-            
-        session = get_db_session()
-        if not session:
-            return
-            
+        """Inicializa la conexión con la base de datos PostgreSQL"""
         try:
-            # Verificar si ya hay datos
-            count = session.query(Empleado).count()
-            if count > 0:
-                logger.info(f"Ya hay {count} empleados en PostgreSQL")
-                return
+            # Obtener URL de conexión desde variable de entorno
+            self.database_url = os.environ.get('DATABASE_URL')
+            if not self.database_url:
+                raise Exception("DATABASE_URL no encontrada en variables de entorno")
             
-            # Intentar migrar desde JSON
-            json_path = "data/embeddings.json"
-            if os.path.exists(json_path):
-                with open(json_path, 'r') as f:
-                    datos = json.load(f)
-                
-                for legajo, info in datos.items():
-                    empleado = Empleado(
-                        legajo=legajo,
-                        area=info.get('area', ''),
-                        rol=info.get('rol', ''),
-                        turno=info.get('turno', ''),
-                        embedding=info.get('embedding', [])
-                    )
-                    session.add(empleado)
-                
-                session.commit()
-                logger.info(f"Migrados {len(datos)} empleados desde JSON a PostgreSQL")
-            else:
-                # Crear empleados de ejemplo
-                empleados_ejemplo = [
-                    {'legajo': '40895446', 'area': 'Producción', 'rol': 'Operario', 'turno': 'mañana'},
-                    {'legajo': '12345678', 'area': 'Administración', 'rol': 'Supervisor', 'turno': 'tarde'},
-                    {'legajo': '87654321', 'area': 'Mantenimiento', 'rol': 'Técnico', 'turno': 'noche'}
-                ]
-                
-                for emp_data in empleados_ejemplo:
-                    empleado = Empleado(
-                        legajo=emp_data['legajo'],
-                        area=emp_data['area'],
-                        rol=emp_data['rol'],
-                        turno=emp_data['turno'],
-                        embedding=[]  # Sin embedding inicial
-                    )
-                    session.add(empleado)
-                
-                session.commit()
-                logger.info("Creados empleados de ejemplo en PostgreSQL")
-                
+            # Establecer conexión
+            self.connection = psycopg2.connect(self.database_url)
+            self.connection.autocommit = True
+            
+            # Crear tablas si no existen
+            self._crear_tablas()
+            
         except Exception as e:
-            logger.error(f"Error en migración: {e}")
-            session.rollback()
-        finally:
-            session.close()
+            print(f"ERROR conectando a PostgreSQL: {e}")
+            raise e
     
-    def cargar_empleados(self):
-        """Carga empleados - compatible con código existente"""
-        if self.use_postgresql:
-            return self._cargar_empleados_postgresql()
-        else:
-            return self._cargar_empleados_json()
-    
-    def _cargar_empleados_postgresql(self):
-        """Carga empleados desde PostgreSQL"""
-        session = get_db_session()
-        if not session:
-            return {}
-            
+    def _crear_tablas(self):
+        """Crea las tablas necesarias si no existen"""
         try:
-            empleados = session.query(Empleado).all()
-            resultado = {}
+            cursor = self.connection.cursor()
             
-            for emp in empleados:
-                resultado[emp.legajo] = {
-                    "area": emp.area,
-                    "rol": emp.rol,
-                    "turno": emp.turno,
-                    "embedding": emp.embedding
+            # Tabla de empleados
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS empleados (
+                    legajo VARCHAR(50) PRIMARY KEY,
+                    area VARCHAR(100) NOT NULL,
+                    rol VARCHAR(100) NOT NULL,
+                    turno VARCHAR(20) NOT NULL CHECK (turno IN ('mañana', 'tarde', 'noche')),
+                    embedding JSONB NOT NULL,
+                    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Tabla de asistencias
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS asistencias (
+                    id SERIAL PRIMARY KEY,
+                    legajo VARCHAR(50) NOT NULL,
+                    turno VARCHAR(20) NOT NULL,
+                    tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('entrada', 'salida')),
+                    fecha DATE NOT NULL,
+                    hora TIME NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (legajo) REFERENCES empleados(legajo)
+                )
+            """)
+            
+            cursor.close()
+            
+        except Exception as e:
+            print(f"ERROR creando tablas: {e}")
+            raise e
+    
+    def obtener_todos_empleados(self):
+        """
+        Obtiene todos los empleados de la base de datos
+        Retorna una lista de diccionarios con la información de cada empleado
+        """
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                SELECT legajo, area, rol, turno, embedding, fecha_registro 
+                FROM empleados 
+                ORDER BY legajo
+            """)
+            
+            empleados = []
+            for row in cursor.fetchall():
+                empleado = {
+                    'legajo': row[0],
+                    'area': row[1],
+                    'rol': row[2],
+                    'turno': row[3],
+                    'embedding': json.loads(row[4]) if isinstance(row[4], str) else row[4],
+                    'fecha_registro': row[5]
                 }
+                empleados.append(empleado)
             
-            logger.info(f"Cargados {len(resultado)} empleados desde PostgreSQL")
-            return resultado
+            cursor.close()
+            return empleados
             
         except Exception as e:
-            logger.error(f"Error cargando empleados PostgreSQL: {e}")
-            return {}
-        finally:
-            session.close()
+            print(f"ERROR obteniendo empleados: {e}")
+            return []
     
-    def _cargar_empleados_json(self):
-        """Carga empleados desde JSON (fallback)"""
+    def contar_empleados(self):
+        """Cuenta el número total de empleados"""
         try:
-            ruta = "data/embeddings.json"
-            if not os.path.exists(ruta):
-                return {}
-            with open(ruta, "r") as f:
-                data = json.load(f)
-                logger.info(f"Cargados {len(data)} empleados desde JSON")
-                return data
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM empleados")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            return count
         except Exception as e:
-            logger.error(f"Error cargando JSON: {e}")
-            return {}
+            print(f"ERROR contando empleados: {e}")
+            return 0
     
-    def guardar_empleado(self, legajo, area, rol, turno, embedding):
-        """Guarda un empleado"""
-        if self.use_postgresql:
-            return self._guardar_empleado_postgresql(legajo, area, rol, turno, embedding)
-        else:
-            return self._guardar_empleado_json(legajo, area, rol, turno, embedding)
-    
-    def _guardar_empleado_postgresql(self, legajo, area, rol, turno, embedding):
-        """Guarda empleado en PostgreSQL"""
-        session = get_db_session()
-        if not session:
-            return {"exito": False, "mensaje": "Error de conexión a base de datos"}
-            
+    def empleado_existe(self, legajo):
+        """Verifica si un empleado con el legajo dado ya existe"""
         try:
-            # Verificar si existe
-            existente = session.query(Empleado).filter(Empleado.legajo == legajo).first()
-            if existente:
-                return {"exito": False, "mensaje": "Legajo ya registrado"}
-            
-            # Crear nuevo
-            nuevo = Empleado(
-                legajo=legajo,
-                area=area,
-                rol=rol,
-                turno=turno,
-                embedding=embedding
-            )
-            
-            session.add(nuevo)
-            session.commit()
-            
-            logger.info(f"Empleado {legajo} guardado en PostgreSQL")
-            return {"exito": True, "mensaje": "Empleado registrado correctamente"}
-            
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM empleados WHERE legajo = %s", (legajo,))
+            count = cursor.fetchone()[0]
+            cursor.close()
+            return count > 0
         except Exception as e:
-            session.rollback()
-            logger.error(f"Error guardando empleado PostgreSQL: {e}")
-            return {"exito": False, "mensaje": "Error al guardar empleado"}
-        finally:
-            session.close()
+            print(f"ERROR verificando empleado: {e}")
+            return False
     
-    def _guardar_empleado_json(self, legajo, area, rol, turno, embedding):
-        """Guarda empleado en JSON (fallback)"""
+    def registrar_empleado(self, legajo, area, rol, turno, embedding):
+        """Registra un nuevo empleado en la base de datos"""
         try:
-            base = self._cargar_empleados_json()
-            if legajo in base:
-                return {"exito": False, "mensaje": "Legajo ya registrado"}
+            cursor = self.connection.cursor()
             
-            base[legajo] = {
-                "area": area,
-                "rol": rol,
-                "turno": turno,
-                "embedding": embedding
-            }
+            # Convertir embedding a JSON si es una lista
+            embedding_json = json.dumps(embedding) if isinstance(embedding, list) else embedding
             
-            os.makedirs("data", exist_ok=True)
-            with open("data/embeddings.json", "w") as f:
-                json.dump(base, f, indent=4)
+            cursor.execute("""
+                INSERT INTO empleados (legajo, area, rol, turno, embedding)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (legajo, area, rol, turno, embedding_json))
             
-            logger.info(f"Empleado {legajo} guardado en JSON")
-            return {"exito": True, "mensaje": "Empleado registrado correctamente"}
+            cursor.close()
+            return True
             
         except Exception as e:
-            logger.error(f"Error guardando empleado JSON: {e}")
-            return {"exito": False, "mensaje": "Error al guardar empleado"}
+            print(f"ERROR registrando empleado: {e}")
+            return False
     
-    def registrar_asistencia(self, legajo, turno, tipo_registro="entrada"):
-        """Registra una asistencia"""
-        if self.use_postgresql:
-            return self._registrar_asistencia_postgresql(legajo, turno, tipo_registro)
-        else:
-            # Usar el sistema JSON existente
-            from persistencia.registrarAsistencia import RegistrarAsistencias
-            asistencia = RegistrarAsistencias()
-            return asistencia.registrar(legajo, turno, tipo_registro)
-    
-    def _registrar_asistencia_postgresql(self, legajo, turno, tipo_registro):
-        """Registra asistencia en PostgreSQL"""
-        session = get_db_session()
-        if not session:
-            return {"exito": False, "mensaje": "Error de conexión a base de datos"}
-            
+    def obtener_empleado(self, legajo):
+        """Obtiene un empleado específico por legajo"""
         try:
-            ahora = datetime.now()
+            cursor = self.connection.cursor()
+            cursor.execute("""
+                SELECT legajo, area, rol, turno, embedding, fecha_registro 
+                FROM empleados 
+                WHERE legajo = %s
+            """, (legajo,))
             
-            nueva_asistencia = Asistencia(
-                legajo=legajo,
-                turno=turno,
-                tipo=tipo_registro.lower(),
-                fecha=ahora.strftime("%Y-%m-%d"),
-                hora=ahora.strftime("%H:%M:%S")
-            )
+            row = cursor.fetchone()
+            cursor.close()
             
-            session.add(nueva_asistencia)
-            session.commit()
-            
-            logger.info(f"Asistencia registrada en PostgreSQL: {legajo} - {tipo_registro}")
-            return {"exito": True, "mensaje": f"{tipo_registro.capitalize()} registrada correctamente"}
+            if row:
+                return {
+                    'legajo': row[0],
+                    'area': row[1],
+                    'rol': row[2],
+                    'turno': row[3],
+                    'embedding': json.loads(row[4]) if isinstance(row[4], str) else row[4],
+                    'fecha_registro': row[5]
+                }
+            return None
             
         except Exception as e:
-            session.rollback()
-            logger.error(f"Error registrando asistencia PostgreSQL: {e}")
-            return {"exito": False, "mensaje": "Error al registrar asistencia"}
-        finally:
-            session.close()
-
-# Instancia global
-db_manager = DatabaseManager()
+            print(f"ERROR obteniendo empleado: {e}")
+            return None
+    
+    def eliminar_empleado(self, legajo):
+        """Elimina un empleado de la base de datos"""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM empleados WHERE legajo = %s", (legajo,))
+            cursor.close()
+            return True
+        except Exception as e:
+            print(f"ERROR eliminando empleado: {e}")
+            return False
+    
+    def cerrar_conexion(self):
+        """Cierra la conexión con la base de datos"""
+        try:
+            if self.connection:
+                self.connection.close()
+        except Exception as e:
+            print(f"ERROR cerrando conexión: {e}")
+    
+    def __del__(self):
+        """Destructor para cerrar automáticamente la conexión"""
+        self.cerrar_conexion()
