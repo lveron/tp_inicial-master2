@@ -232,6 +232,56 @@ def reconocer():
         traceback.print_exc()
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
 
+@app.route('/dashboard', methods=['GET'])
+def get_dashboard():
+    try:
+        # Obtener estadísticas básicas
+        total_empleados = database_manager.contar_empleados()
+        
+        # Obtener todos los empleados para análisis de turnos
+        empleados = database_manager.obtener_todos_empleados()
+        
+        # Contar empleados por turno
+        turnos = {'mañana': 0, 'tarde': 0, 'noche': 0}
+        for empleado in empleados:
+            turno = empleado.get('turno', '').lower()
+            if turno in turnos:
+                turnos[turno] += 1
+        
+        # Obtener asistencias de hoy (simulado por ahora)
+        from datetime import date
+        today = date.today()
+        asistencias_hoy = 0  # Por ahora simulado
+        
+        # Generar datos de asistencias de los últimos 7 días (simulado)
+        from datetime import datetime, timedelta
+        asistencias_semana = []
+        for i in range(7):
+            fecha = today - timedelta(days=6-i)
+            # Por ahora datos simulados - puedes implementar lógica real después
+            count = min(total_empleados, max(0, total_empleados - (i % 3)))
+            asistencias_semana.append({
+                'fecha': fecha.isoformat(),
+                'count': count
+            })
+        
+        return jsonify({
+            'exito': True,
+            'totalEmpleados': total_empleados,
+            'asistenciasHoy': asistencias_hoy,
+            'empleadosPorTurno': turnos,
+            'asistenciasSemana': asistencias_semana
+        })
+        
+    except Exception as e:
+        print(f"ERROR en dashboard: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'exito': False,
+            'mensaje': f'Error interno: {str(e)}'
+        }), 500
+
 @app.route('/empleados', methods=['GET'])
 def obtener_empleados():
     try:
