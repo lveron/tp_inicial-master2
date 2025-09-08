@@ -27,8 +27,13 @@ CORS(app)
 database_manager = DatabaseManager()
 print("INFO: DatabaseManager cargado correctamente")
 
-# Cargar empleados desde la base de datos
-empleados = database_manager.obtener_todos_empleados()
+# Cargar empleados desde la base de datos con manejo de errores
+try:
+    empleados = database_manager.obtener_todos_empleados()
+    print(f"INFO: Cargados {len(empleados)} empleados desde la base de datos")
+except Exception as e:
+    print(f"ERROR cargando empleados: {e}")
+    empleados = []
 
 # Inicializar validadores
 validador_legajo = ValidadorLegajo(empleados)
@@ -36,6 +41,18 @@ validador_turno = ValidadorTurno(empleados)
 
 # Inicializar registro de asistencias
 registrar_asistencias = RegistrarAsistencias()
+
+def actualizar_validadores():
+    """Función auxiliar para actualizar los validadores con empleados frescos"""
+    try:
+        empleados_actualizados = database_manager.obtener_todos_empleados()
+        global validador_legajo, validador_turno
+        validador_legajo = ValidadorLegajo(empleados_actualizados)
+        validador_turno = ValidadorTurno(empleados_actualizados)
+        return True
+    except Exception as e:
+        print(f"ERROR actualizando validadores: {e}")
+        return False
 
 @app.route('/')
 def home():
@@ -87,31 +104,38 @@ def ping():
 def validar_empleado():
     try:
         data = request.get_json()
+        
+        if not data:
+            return jsonify({"valido": False, "mensaje": "No se recibieron datos"}), 200
+            
         legajo = data.get('legajo')
         turno = data.get('turno')
         
         if not legajo or not turno:
-            return jsonify({"error": "Legajo y turno son requeridos"}), 400
+            return jsonify({"valido": False, "mensaje": "Legajo y turno son requeridos"}), 200
         
         # Validar legajo
         legajo_valido = validador_legajo.validar(legajo)
         if not legajo_valido:
-            return jsonify({"error": "Legajo no válido"}), 404
+            return jsonify({"valido": False, "mensaje": "Legajo no válido"}), 200
         
         # Validar turno
         turno_valido = validador_turno.validar(legajo, turno)
         if not turno_valido:
-            return jsonify({"error": "Turno no válido para este empleado"}), 400
+            return jsonify({"valido": False, "mensaje": "Turno no válido para este empleado"}), 200
         
         return jsonify({
+            "valido": True,
+            "mensaje": "Validación exitosa",
             "legajo": legajo,
-            "turno": turno,
-            "valido": True
-        })
+            "turno": turno
+        }), 200
         
     except Exception as e:
         print(f"ERROR en validar_empleado: {e}")
-        return jsonify({"error": "Error interno del servidor"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({"valido": False, "mensaje": "Error interno del servidor"}), 200
 
 @app.route('/registrar_empleado', methods=['POST'])
 def registrar_empleado():
@@ -131,17 +155,27 @@ def registrar_empleado():
         
         # Validar campos obligatorios
         if not all([legajo, area, rol, turno]):
-            return jsonify({"error": "Faltan campos obligatorios"}), 400
+            return jsonify({"exito": False, "mensaje": "Faltan campos obligatorios"}), 200
+            
+        # Validar turno
+        turnos_validos = ['mañana', 'tarde', 'noche']
+        if turno not in turnos_validos:
+            return jsonify({"exito": False, "mensaje": f"Turno debe ser uno de: {', '.join(turnos_validos)}"}), 200
             
         # Verificar si el legajo ya existe
         if database_manager.empleado_existe(legajo):
-            return jsonify({"error": "El empleado ya existe"}), 409
+            return jsonify({"exito": False, "mensaje": "El empleado ya existe"}), 200
             
+        # Procesar imagen y embedding
         if RECONOCIMIENTO_DISPONIBLE and imagen:
-            # Generar embedding de la imagen
-            embedding = generarEmbedding(imagen)
-            if embedding is None:
-                return jsonify({"exito": False, "mensaje": "Embedding inválido"}), 400
+            try:
+                # Generar embedding de la imagen
+                embedding = generarEmbedding(imagen)
+                if embedding is None:
+                    return jsonify({"exito": False, "mensaje": "No se pudo procesar la imagen facial"}), 200
+            except Exception as e:
+                print(f"ERROR procesando imagen: {e}")
+                return jsonify({"exito": False, "mensaje": "Error procesando la imagen facial"}), 200
         else:
             # Usar embedding dummy si no hay reconocimiento o imagen
             embedding = [0.0] * 128
@@ -157,31 +191,31 @@ def registrar_empleado():
         
         if resultado:
             # Actualizar validadores con el nuevo empleado
-            empleados_actualizados = database_manager.obtener_todos_empleados()
-            global validador_legajo, validador_turno
-            validador_legajo = ValidadorLegajo(empleados_actualizados)
-            validador_turno = ValidadorTurno(empleados_actualizados)
+            actualizar_validadores()
             
             return jsonify({
                 "exito": True,
                 "mensaje": "Empleado registrado exitosamente",
                 "legajo": legajo,
+                "area": area,
+                "rol": rol,
+                "turno": turno,
                 "modo": "con_reconocimiento" if RECONOCIMIENTO_DISPONIBLE and imagen else "sin_reconocimiento"
-            }), 201
+            }), 200
         else:
-            return jsonify({"exito": False, "mensaje": "Error al registrar empleado en la base de datos"}), 500
+            return jsonify({"exito": False, "mensaje": "Error al registrar empleado en la base de datos"}), 200
             
     except Exception as e:
         print(f"ERROR en registrar_empleado: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"exito": False, "mensaje": f"Error interno: {str(e)}"}), 500
+        return jsonify({"exito": False, "mensaje": f"Error interno: {str(e)}"}), 200
 
 @app.route('/reconocer', methods=['POST'])
 def reconocer():
     try:
         if not RECONOCIMIENTO_DISPONIBLE:
-            return jsonify({"error": "Servicio de reconocimiento no disponible"}), 503
+            return jsonify({"exito": False, "mensaje": "Servicio de reconocimiento no disponible"}), 200
             
         # Obtener datos
         legajo = request.form.get('legajo')
@@ -189,48 +223,76 @@ def reconocer():
         imagen = request.files.get('imagen')
         
         if not all([legajo, turno, imagen]):
-            return jsonify({"error": "Legajo, turno e imagen son requeridos"}), 400
+            return jsonify({"exito": False, "mensaje": "Legajo, turno e imagen son requeridos"}), 200
         
         # Validar legajo y turno
         if not validador_legajo.validar(legajo):
-            return jsonify({"error": "Legajo no válido"}), 404
+            return jsonify({"exito": False, "mensaje": "Legajo no válido"}), 200
             
         if not validador_turno.validar(legajo, turno):
-            return jsonify({"error": "Turno no válido"}), 400
+            return jsonify({"exito": False, "mensaje": "Turno no válido para este empleado"}), 200
         
         # Obtener embeddings de todos los empleados
         empleados_embeddings = {}
         empleados = database_manager.obtener_todos_empleados()
+        
+        if not empleados:
+            return jsonify({"exito": False, "mensaje": "No hay empleados registrados"}), 200
+            
         for empleado in empleados:
-            empleados_embeddings[empleado['legajo']] = empleado['embedding']
+            if empleado.get('embedding'):
+                empleados_embeddings[empleado['legajo']] = empleado['embedding']
+        
+        if not empleados_embeddings:
+            return jsonify({"exito": False, "mensaje": "No hay embeddings disponibles para reconocimiento"}), 200
         
         # Reconocer empleado
-        empleado_reconocido, distancia = reconocer_empleado(imagen, empleados_embeddings)
+        try:
+            empleado_reconocido, distancia = reconocer_empleado(imagen, empleados_embeddings)
+        except Exception as e:
+            print(f"ERROR en reconocimiento facial: {e}")
+            return jsonify({"exito": False, "mensaje": "Error en el proceso de reconocimiento facial"}), 200
         
         if empleado_reconocido == legajo:
             # Registrar asistencia
-            resultado = registrar_asistencias.registrar(legajo, turno)
-            
-            return jsonify({
-                "legajo": legajo,
-                "reconocido": True,
-                "distancia": distancia,
-                "asistencia_registrada": resultado,
-                "timestamp": datetime.now().isoformat()
-            })
+            try:
+                resultado = registrar_asistencias.registrar(legajo, turno)
+                
+                return jsonify({
+                    "exito": True,
+                    "mensaje": "Ingreso registrado correctamente",
+                    "legajo": legajo,
+                    "reconocido": True,
+                    "distancia": float(distancia) if distancia is not None else None,
+                    "asistencia_registrada": resultado,
+                    "timestamp": datetime.now().isoformat()
+                }), 200
+            except Exception as e:
+                print(f"ERROR registrando asistencia: {e}")
+                return jsonify({
+                    "exito": True,
+                    "mensaje": "Empleado reconocido, pero error registrando asistencia",
+                    "legajo": legajo,
+                    "reconocido": True,
+                    "distancia": float(distancia) if distancia is not None else None,
+                    "asistencia_registrada": False,
+                    "timestamp": datetime.now().isoformat()
+                }), 200
         else:
             return jsonify({
+                "exito": False,
+                "mensaje": f"La persona no coincide con el legajo {legajo}. Detectado: {empleado_reconocido or 'Desconocido'}",
                 "legajo": legajo,
                 "reconocido": False,
-                "distancia": distancia,
+                "distancia": float(distancia) if distancia is not None else None,
                 "empleado_detectado": empleado_reconocido
-            }), 403
+            }), 200
             
     except Exception as e:
         print(f"ERROR en reconocer: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        return jsonify({"exito": False, "mensaje": f"Error interno: {str(e)}"}), 200
 
 @app.route('/dashboard', methods=['GET'])
 def get_dashboard():
@@ -280,7 +342,7 @@ def get_dashboard():
         return jsonify({
             'exito': False,
             'mensaje': f'Error interno: {str(e)}'
-        }), 500
+        }), 200
 
 @app.route('/empleados', methods=['GET'])
 def obtener_empleados():
@@ -291,6 +353,9 @@ def obtener_empleados():
         empleados_sin_embedding = []
         for emp in empleados:
             emp_limpio = {k: v for k, v in emp.items() if k != 'embedding'}
+            # Formatear fecha si existe
+            if emp_limpio.get('fecha_registro'):
+                emp_limpio['fecha_registro'] = emp_limpio['fecha_registro'].isoformat()
             empleados_sin_embedding.append(emp_limpio)
             
         return jsonify({
@@ -300,6 +365,8 @@ def obtener_empleados():
         
     except Exception as e:
         print(f"ERROR en obtener_empleados: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "Error interno del servidor"}), 500
 
 @app.route('/asistencias/<legajo>', methods=['GET'])
@@ -318,7 +385,21 @@ def obtener_asistencias(legajo):
         
     except Exception as e:
         print(f"ERROR en obtener_asistencias: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "Error interno del servidor"}), 500
+
+# Endpoint de debug
+@app.route('/debug', methods=['GET'])
+def debug():
+    return jsonify({
+        "RECONOCIMIENTO_DISPONIBLE": RECONOCIMIENTO_DISPONIBLE,
+        "EMBEDDING_DISPONIBLE": EMBEDDING_DISPONIBLE,
+        "database_ok": database_manager is not None,
+        "validadores_ok": validador_legajo is not None and validador_turno is not None,
+        "asistencias_ok": registrar_asistencias is not None,
+        "total_empleados": len(database_manager.obtener_todos_empleados()) if database_manager else 0
+    })
 
 @app.errorhandler(404)
 def not_found(error):
