@@ -1,97 +1,44 @@
-# Usar imagen Ubuntu con Python y librerías precompiladas
-FROM ubuntu:22.04
+# Usar imagen con Miniconda preinstalada
+FROM continuumio/miniconda3:latest
 
-# Configurar entorno no interactivo
-ENV DEBIAN_FRONTEND=noninteractive
+# Configurar entorno
 ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Instalar Python y dependencias del sistema en una sola capa
+# Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3-pip \
-    python3.11-dev \
-    python3.11-distutils \
     build-essential \
     cmake \
-    pkg-config \
-    wget \
-    curl \
-    git \
-    libopenblas-dev \
-    liblapack-dev \
-    libhdf5-dev \
-    libatlas-base-dev \
-    gfortran \
-    libjpeg8-dev \
-    libpng-dev \
-    libtiff5-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libswscale-dev \
-    libgtk-3-dev \
-    libcanberra-gtk-module \
-    libcanberra-gtk3-module \
-    libxvidcore-dev \
-    libx264-dev \
-    libgtk-3-dev \
-    libatlas-base-dev \
-    gfortran \
-    libgstreamer1.0-dev \
-    libgstreamer-plugins-base1.0-dev \
-    libv4l-dev \
-    libxine2-dev \
-    libtbb-dev \
-    libeigen3-dev \
-    libfaac-dev \
-    libmp3lame-dev \
-    libtheora-dev \
-    libvorbis-dev \
-    libopencore-amrnb-dev \
-    libopencore-amrwb-dev \
-    x264 \
-    v4l-utils \
-    libprotobuf-dev \
-    protobuf-compiler \
-    libgoogle-glog-dev \
-    libgflags-dev \
-    libgphoto2-dev \
-    libeigen3-dev \
-    libhdf5-dev \
-    doxygen \
     libx11-6 \
     libxext6 \
     libxrender1 \
-    libxtst6 \
-    libxi6 \
-    libxrandr2 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libatk1.0-0 \
-    libcairo-gobject2 \
-    libgtk-3-0 \
-    libgdk-pixbuf2.0-0 \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear enlaces simbólicos para Python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python && \
-    ln -s /usr/bin/python3.11 /usr/bin/python3
+# Crear entorno conda con Python 3.11
+RUN conda create -n faceapp python=3.11 -y
+SHELL ["conda", "run", "-n", "faceapp", "/bin/bash", "-c"]
 
-# Actualizar pip
-RUN python -m pip install --upgrade pip setuptools wheel
+# Instalar dependencias con conda (más confiable para librerías científicas)
+RUN conda install -y \
+    numpy=1.24.3 \
+    opencv \
+    cmake \
+    -c conda-forge
+
+# Instalar dlib y face_recognition con pip en el entorno conda  
+RUN pip install dlib==19.24.2
+RUN pip install face_recognition==1.3.0
 
 # Establecer directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements
+# Copiar requirements (sin las librerías problemáticas)
 COPY requirements.txt .
 
-# Instalar dependencias Python específicamente
-RUN pip install numpy==1.24.3
-RUN pip install cmake
-RUN pip install dlib==19.24.2
-RUN pip install face_recognition==1.3.0
-RUN pip install opencv-python-headless==4.8.1.78
-RUN pip install --no-cache-dir -r requirements.txt
+# Instalar el resto de dependencias
+RUN pip install flask flask-cors gunicorn psycopg2-binary sqlalchemy pillow requests python-dateutil
 
 # Crear directorios
 RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
@@ -99,12 +46,8 @@ RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
 # Copiar aplicación
 COPY . .
 
-# Variables de entorno para evitar problemas gráficos
-ENV DISPLAY=:99
-ENV QT_X11_NO_MITSHM=1
-
 # Exponer puerto
 EXPOSE 8080
 
-# Comando de inicio
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
+# Usar conda run para ejecutar la aplicación
+CMD ["conda", "run", "-n", "faceapp", "gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
