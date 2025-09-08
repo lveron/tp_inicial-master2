@@ -16,15 +16,15 @@ RUN apt-get update && apt-get install -y \
     libgcc-s1 \
     cmake \
     build-essential \
-    libgtk-3-0 \
-    libavcodec58 \
-    libavformat58 \
-    libswscale5 \
+    pkg-config \
+    libx11-dev \
     libx11-6 \
-    libxcb1 \
-    libxau6 \
-    libxdmcp6 \
- && rm -rf /var/lib/apt/lists/*
+    libxcb1-dev \
+    libxau-dev \
+    libxdmcp-dev \
+    x11-common \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copiar requirements primero (para aprovechar cache de Docker)
 COPY requirements.txt .
