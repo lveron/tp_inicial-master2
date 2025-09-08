@@ -58,12 +58,12 @@ def generarEmbedding(imagen_file):
         imagen_rgb = np.array(imagen.convert('RGB'))
         imagen_gris = cv2.cvtColor(imagen_rgb, cv2.COLOR_RGB2GRAY)
         
-        # Detectar caras
+        # Detectar caras con parámetros menos estrictos
         caras = face_cascade.detectMultiScale(
             imagen_gris, 
-            scaleFactor=1.1, 
-            minNeighbors=5, 
-            minSize=(30, 30)
+            scaleFactor=1.05,  # Más sensible (era 1.1)
+            minNeighbors=3,    # Menos estricto (era 5)  
+            minSize=(20, 20)   # Caras más pequeñas (era 30, 30)
         )
         
         if len(caras) == 0:
