@@ -1,103 +1,120 @@
-# generarEmbedding.py - Nueva versión sin dlib
+# generarEmbedding.py - Versión ultra-ligera con OpenCV + scikit-learn
 import cv2
 import numpy as np
-import mediapipe as mp
 from PIL import Image
 import io
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
-# Inicializar MediaPipe
-mp_face_detection = mp.solutions.face_detection
-mp_face_mesh = mp.solutions.face_mesh
+# Inicializar detector de caras de OpenCV (incluido en opencv-python-headless)
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+def extraer_caracteristicas_cara(imagen_gris, x, y, w, h):
+    """
+    Extrae características básicas de una cara detectada
+    """
+    # Recortar la cara
+    cara = imagen_gris[y:y+h, x:x+w]
+    
+    # Redimensionar a tamaño fijo
+    cara_resize = cv2.resize(cara, (100, 100))
+    
+    # Calcular histograma como característica base
+    hist = cv2.calcHist([cara_resize], [0], None, [256], [0, 256])
+    
+    # Calcular gradientes (bordes)
+    grad_x = cv2.Sobel(cara_resize, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(cara_resize, cv2.CV_64F, 0, 1, ksize=3)
+    
+    # Características estadísticas
+    caracteristicas = []
+    
+    # Del histograma (normalizado)
+    caracteristicas.extend(hist.flatten() / np.sum(hist))
+    
+    # De los gradientes
+    caracteristicas.extend([
+        np.mean(grad_x), np.std(grad_x),
+        np.mean(grad_y), np.std(grad_y),
+        np.mean(np.abs(grad_x)), np.mean(np.abs(grad_y))
+    ])
+    
+    # Estadísticas básicas de la imagen
+    caracteristicas.extend([
+        np.mean(cara_resize), np.std(cara_resize),
+        np.min(cara_resize), np.max(cara_resize)
+    ])
+    
+    return np.array(caracteristicas)
 
 def generarEmbedding(imagen_file):
     """
-    Genera embedding facial usando MediaPipe (sin dependencias X11)
+    Genera embedding facial usando OpenCV y análisis estadístico
     """
     try:
         # Leer imagen
         imagen_bytes = imagen_file.read()
         imagen = Image.open(io.BytesIO(imagen_bytes))
         
-        # Convertir a RGB numpy array
+        # Convertir a numpy array y escala de grises
         imagen_rgb = np.array(imagen.convert('RGB'))
+        imagen_gris = cv2.cvtColor(imagen_rgb, cv2.COLOR_RGB2GRAY)
         
-        # Detectar caras con MediaPipe
-        with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as face_detection:
-            results = face_detection.process(imagen_rgb)
+        # Detectar caras
+        caras = face_cascade.detectMultiScale(
+            imagen_gris, 
+            scaleFactor=1.1, 
+            minNeighbors=5, 
+            minSize=(30, 30)
+        )
+        
+        if len(caras) == 0:
+            print("No se detectó ninguna cara en la imagen")
+            return None
             
-            if not results.detections:
-                print("No se detectó ninguna cara en la imagen")
-                return None
-                
-        # Extraer características faciales con Face Mesh
-        with mp_face_mesh.FaceMesh(
-            static_image_mode=True,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5) as face_mesh:
-            
-            results = face_mesh.process(imagen_rgb)
-            
-            if not results.multi_face_landmarks:
-                print("No se pudieron extraer características faciales")
-                return None
-                
-            # Extraer landmarks de la primera cara
-            face_landmarks = results.multi_face_landmarks[0]
-            
-            # Convertir landmarks a embedding de 128 dimensiones
-            landmarks_array = []
-            for landmark in face_landmarks.landmark:
-                landmarks_array.extend([landmark.x, landmark.y, landmark.z])
-            
-            # Normalizar y reducir a 128 dimensiones
-            landmarks_array = np.array(landmarks_array)
-            
-            # Usar PCA simple o tomar las primeras 128 características más significativas
-            if len(landmarks_array) > 128:
-                # Tomar cada n-ésimo elemento para llegar a 128
-                step = len(landmarks_array) // 128
-                embedding = landmarks_array[::step][:128]
-            else:
-                # Pad con ceros si es necesario
-                embedding = np.pad(landmarks_array, (0, max(0, 128 - len(landmarks_array))))
-            
-            # Normalizar el embedding
-            embedding = embedding / np.linalg.norm(embedding)
-            
-            return embedding.tolist()
-            
+        # Tomar la cara más grande
+        cara_principal = max(caras, key=lambda c: c[2] * c[3])
+        x, y, w, h = cara_principal
+        
+        # Extraer características
+        caracteristicas = extraer_caracteristicas_cara(imagen_gris, x, y, w, h)
+        
+        # Reducir dimensionalidad a 128 usando selección manual
+        if len(caracteristicas) > 128:
+            # Tomar las características más significativas
+            indices = np.argsort(np.abs(caracteristicas))[-128:]
+            embedding = caracteristicas[indices]
+        else:
+            # Pad con ceros si es necesario
+            embedding = np.pad(caracteristicas, (0, max(0, 128 - len(caracteristicas))))
+        
+        # Normalizar
+        embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+        
+        return embedding.tolist()
+        
     except Exception as e:
         print(f"Error generando embedding: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
-
-def calcular_distancia_coseno(embedding1, embedding2):
+def calcular_distancia_euclidiana(embedding1, embedding2):
     """
-    Calcula distancia coseno entre dos embeddings
+    Calcula distancia euclidiana entre dos embeddings
     """
     try:
         emb1 = np.array(embedding1)
         emb2 = np.array(embedding2)
         
-        dot_product = np.dot(emb1, emb2)
-        norm1 = np.linalg.norm(emb1)
-        norm2 = np.linalg.norm(emb2)
-        
-        if norm1 == 0 or norm2 == 0:
-            return 1.0
-            
-        similarity = dot_product / (norm1 * norm2)
-        distance = 1 - similarity
-        
-        return distance
+        distancia = np.linalg.norm(emb1 - emb2)
+        return distancia
         
     except Exception as e:
         print(f"Error calculando distancia: {e}")
         return 1.0
 
-
-def reconocer_empleado(imagen_file, empleados_embeddings, umbral=0.4):
+def reconocer_empleado(imagen_file, empleados_embeddings, umbral=0.6):
     """
     Reconoce empleado comparando con embeddings guardados
     """
@@ -112,7 +129,7 @@ def reconocer_empleado(imagen_file, empleados_embeddings, umbral=0.4):
         
         # Comparar con todos los empleados
         for legajo, embedding_guardado in empleados_embeddings.items():
-            distancia = calcular_distancia_coseno(nuevo_embedding, embedding_guardado)
+            distancia = calcular_distancia_euclidiana(nuevo_embedding, embedding_guardado)
             
             if distancia < menor_distancia:
                 menor_distancia = distancia
@@ -126,4 +143,6 @@ def reconocer_empleado(imagen_file, empleados_embeddings, umbral=0.4):
             
     except Exception as e:
         print(f"Error en reconocimiento: {e}")
+        import traceback
+        traceback.print_exc()
         return None, 1.0
