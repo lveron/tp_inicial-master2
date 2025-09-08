@@ -1,80 +1,107 @@
-# Usar imagen base con más librerías preinstaladas
-FROM python:3.11-bullseye
+# Usar imagen Ubuntu con Python y librerías precompiladas
+FROM ubuntu:22.04
+
+# Configurar entorno no interactivo
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Instalar Python y dependencias del sistema en una sola capa
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    python3.11-dev \
+    python3.11-distutils \
+    build-essential \
+    cmake \
+    pkg-config \
+    wget \
+    curl \
+    git \
+    libopenblas-dev \
+    liblapack-dev \
+    libhdf5-dev \
+    libatlas-base-dev \
+    gfortran \
+    libjpeg8-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libgtk-3-dev \
+    libcanberra-gtk-module \
+    libcanberra-gtk3-module \
+    libxvidcore-dev \
+    libx264-dev \
+    libgtk-3-dev \
+    libatlas-base-dev \
+    gfortran \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libv4l-dev \
+    libxine2-dev \
+    libtbb-dev \
+    libeigen3-dev \
+    libfaac-dev \
+    libmp3lame-dev \
+    libtheora-dev \
+    libvorbis-dev \
+    libopencore-amrnb-dev \
+    libopencore-amrwb-dev \
+    x264 \
+    v4l-utils \
+    libprotobuf-dev \
+    protobuf-compiler \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libgphoto2-dev \
+    libeigen3-dev \
+    libhdf5-dev \
+    doxygen \
+    libx11-6 \
+    libxext6 \
+    libxrender1 \
+    libxtst6 \
+    libxi6 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Crear enlaces simbólicos para Python
+RUN ln -s /usr/bin/python3.11 /usr/bin/python && \
+    ln -s /usr/bin/python3.11 /usr/bin/python3
+
+# Actualizar pip
+RUN python -m pip install --upgrade pip setuptools wheel
 
 # Establecer directorio de trabajo
 WORKDIR /app
 
-# Actualizar lista de paquetes e instalar dependencias del sistema
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    pkg-config \
-    libx11-6 \
-    libx11-dev \
-    libxext6 \
-    libxext-dev \
-    libxrender1 \
-    libxrender-dev \
-    libsm6 \
-    libsm-dev \
-    libice6 \
-    libice-dev \
-    libfontconfig1 \
-    libfontconfig1-dev \
-    libxcb1 \
-    libxcb1-dev \
-    libxau6 \
-    libxau-dev \
-    libxdmcp6 \
-    libxdmcp-dev \
-    libglib2.0-0 \
-    libglib2.0-dev \
-    libgtk-3-0 \
-    libgtk-3-dev \
-    libgl1-mesa-glx \
-    libgl1-mesa-dev \
-    libgles2-mesa-dev \
-    libegl1-mesa-dev \
-    libgbm1 \
-    libasound2 \
-    libasound2-dev \
-    libpulse0 \
-    libpulse-dev \
-    libjpeg-dev \
-    libpng-dev \
-    libtiff-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libswscale-dev \
-    libv4l-dev \
-    libxvidcore-dev \
-    libx264-dev \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Configurar variables de entorno para X11
-ENV DISPLAY=:99
-ENV QT_X11_NO_MITSHM=1
-ENV DEBIAN_FRONTEND=noninteractive
-
 # Copiar requirements
 COPY requirements.txt .
 
-# Actualizar pip e instalar dependencias
-RUN pip install --upgrade pip setuptools wheel
-
-# Instalar dependencias Python paso a paso para mejor debugging
-RUN pip install --no-cache-dir numpy==1.24.3
-RUN pip install --no-cache-dir opencv-python-headless==4.8.1.78
-RUN pip install --no-cache-dir dlib-bin==19.24.6
-RUN pip install --no-cache-dir face-recognition==1.3.0
+# Instalar dependencias Python específicamente
+RUN pip install numpy==1.24.3
+RUN pip install cmake
+RUN pip install dlib==19.24.2
+RUN pip install face_recognition==1.3.0
+RUN pip install opencv-python-headless==4.8.1.78
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Crear directorios necesarios
+# Crear directorios
 RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
 
-# Copiar el código de la aplicación
+# Copiar aplicación
 COPY . .
+
+# Variables de entorno para evitar problemas gráficos
+ENV DISPLAY=:99
+ENV QT_X11_NO_MITSHM=1
 
 # Exponer puerto
 EXPOSE 8080
