@@ -20,6 +20,10 @@ RUN apt-get update && apt-get install -y \
     libavcodec58 \
     libavformat58 \
     libswscale5 \
+    libx11-6 \
+    libxcb1 \
+    libxau6 \
+    libxdmcp6 \
  && rm -rf /var/lib/apt/lists/*
 
 # Copiar requirements primero (para aprovechar cache de Docker)
@@ -38,7 +42,7 @@ RUN mkdir -p data temp persistencia reconocimiento validarEmpleado
 COPY . .
 
 # Exponer puerto
-EXPOSE 8000
+EXPOSE 8080
 
 # Comando para Flask con gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--timeout", "300", "--workers", "1", "--max-requests", "100", "app:app"]
