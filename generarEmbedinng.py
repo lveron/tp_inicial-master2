@@ -1,12 +1,10 @@
-# generarEmbedding.py - Versión ultra-ligera con OpenCV + scikit-learn
+# generarEmbedding.py - Versión sin sklearn para evitar errores de importación
 import cv2
 import numpy as np
 from PIL import Image
 import io
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
 
-# Inicializar detector de caras de OpenCV (incluido en opencv-python-headless)
+# Inicializar detector de caras de OpenCV
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 def extraer_caracteristicas_cara(imagen_gris, x, y, w, h):
