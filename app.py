@@ -1,45 +1,17 @@
-# app.py
-import os
-import json
-import logging
-from datetime import datetime, date
-import cv2
-import numpy as np
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import os
+from datetime import datetime
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Imports de los módulos locales
+from persistencia.databaseManager import DatabaseManager
+from validarEmpleado.validarLegajo import ValidadorLegajo
+from validarEmpleado.validarTurno import ValidadorTurno
+from persistencia.registrarAsistencia import RegistrarAsistencias
 
-# Crear directorios necesarios
-os.makedirs("data", exist_ok=True)
-os.makedirs("temp", exist_ok=True)
-os.makedirs("persistencia", exist_ok=True)
-os.makedirs("reconocimiento", exist_ok=True)
-os.makedirs("validarEmpleado", exist_ok=True)
-os.makedirs("models", exist_ok=True)
-
-# Inicializar variables de disponibilidad de servicios
-DATABASE_MANAGER_DISPONIBLE = False
-RECONOCIMIENTO_DISPONIBLE = False
-EMBEDDING_DISPONIBLE = False
-ASISTENCIA_DISPONIBLE = False
-VALIDADOR_DISPONIBLE = False
-
-# Import PostgreSQL DatabaseManager
+# Intentar cargar módulos de reconocimiento facial
 try:
-    from persistencia.databaseManager import db_manager
-    DATABASE_MANAGER_DISPONIBLE = True
-    logger.info("DatabaseManager cargado correctamente")
-except ImportError as e:
-    logger.warning(f"No se pudo importar DatabaseManager: {e}")
-    DATABASE_MANAGER_DISPONIBLE = False
-
-# Importaciones condicionales para evitar crashes
-try:
-    from generarEmbedinng import generarEmbedding, reconocer_empleado
+    from generarEmbedding import generarEmbedding, reconocer_empleado
     RECONOCIMIENTO_DISPONIBLE = True
     EMBEDDING_DISPONIBLE = True
     print("INFO: Reconocimiento facial con OpenCV cargado correctamente")
@@ -48,445 +20,255 @@ except Exception as e:
     EMBEDDING_DISPONIBLE = False
     print(f"WARNING: Error cargando reconocimiento: {e}")
 
-try:
-    from persistencia.registrarAsistencia import RegistrarAsistencias
-    ASISTENCIA_DISPONIBLE = True
-except ImportError as e:
-    logger.warning(f"No se pudo importar RegistrarAsistencias: {e}")
-    ASISTENCIA_DISPONIBLE = False
-
-# Segundo intento para reconocimiento desde otro módulo
-if not RECONOCIMIENTO_DISPONIBLE:
-    try:
-        from reconocimiento.verificador import reconocer_empleado
-        RECONOCIMIENTO_DISPONIBLE = True
-    except ImportError as e:
-        logger.warning(f"No se pudo importar reconocer_empleado desde verificador: {e}")
-        RECONOCIMIENTO_DISPONIBLE = False
-
-try:
-    from validarEmpleado.validarLegajo import ValidadorLegajo
-    from validarEmpleado.validarTurno import ValidadorTurno
-    VALIDADOR_DISPONIBLE = True
-except ImportError as e:
-    logger.warning(f"No se pudo importar validadores: {e}")
-    VALIDADOR_DISPONIBLE = False
-
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+CORS(app)
+
+# Inicializar managers
+database_manager = DatabaseManager()
+print("INFO: DatabaseManager cargado correctamente")
+
+# Cargar empleados desde la base de datos
+empleados = database_manager.obtener_todos_empleados()
+
+# Inicializar validadores
+validador_legajo = ValidadorLegajo(empleados)
+validador_turno = ValidadorTurno(empleados)
+
+# Inicializar registro de asistencias
+registrar_asistencias = RegistrarAsistencias()
 
 @app.route('/')
 def home():
-    
+    try:
+        # Verificar conectividad con base de datos
+        empleados_count = database_manager.contar_empleados()
+        db_status = True
+    except Exception as e:
+        print(f"ERROR consultando PostgreSQL: {e}")
+        empleados_count = 0
+        db_status = False
+        
     return jsonify({
         "mensaje": "Backend activo",
-        "status": "OK",
         "servicios": {
+            "database_manager": db_status,
+            "validador": validador_legajo is not None and validador_turno is not None,
+            "asistencia": registrar_asistencias is not None,
             "embedding": EMBEDDING_DISPONIBLE,
-            "asistencia": ASISTENCIA_DISPONIBLE,
-            "reconocimiento": RECONOCIMIENTO_DISPONIBLE,
-            "validador": VALIDADOR_DISPONIBLE,
-            "database_manager": DATABASE_MANAGER_DISPONIBLE
-        }
+            "reconocimiento": RECONOCIMIENTO_DISPONIBLE
+        },
+        "empleados_registrados": empleados_count,
+        "modo": "con_reconocimiento" if RECONOCIMIENTO_DISPONIBLE else "sin_reconocimiento",
+        "status": "OK"
     })
 
-def cargar_base_empleados():
-    """Carga la base de empleados usando DatabaseManager o fallback a JSON"""
-    if DATABASE_MANAGER_DISPONIBLE:
-        try:
-            return db_manager.cargar_empleados()
-        except Exception as e:
-            logger.error(f"Error cargando empleados desde DB: {e}")
-            # Fallback a JSON si DB falla
-    
-    # Fallback al sistema JSON tradicional
-    ruta = os.path.normpath("data/embeddings.json")
-    if not os.path.exists(ruta):
-        logger.info("Archivo embeddings.json no existe, creando base vacía")
-        with open(ruta, "w") as f:
-            json.dump({}, f)
-        return {}
-    
-    try:
-        with open(ruta, "r") as f:
-            data = json.load(f)
-            logger.info(f"Base de empleados cargada desde JSON: {len(data)} empleados")
-            return data
-    except json.JSONDecodeError:
-        logger.error("Error al decodificar JSON, iniciando base vacía")
-        return {}
-    except Exception as e:
-        logger.error(f"Error al cargar base de empleados: {e}")
-        return {}
-
-# Inicializar componentes si están disponibles
-base = cargar_base_empleados()
-
-# Inicializar validadores
-val_legajo = None
-val_turno = None
-if VALIDADOR_DISPONIBLE:
-    try:
-        val_legajo = ValidadorLegajo(base)
-        val_turno = ValidadorTurno(base)
-    except Exception as e:
-        logger.error(f"Error inicializando validadores: {e}")
-        VALIDADOR_DISPONIBLE = False
-
-# Inicializar asistencias
-asistencia = None
-if ASISTENCIA_DISPONIBLE:
-    try:
-        asistencia = RegistrarAsistencias()
-    except Exception as e:
-        logger.error(f"Error inicializando asistencias: {e}")
-        ASISTENCIA_DISPONIBLE = False
-
-@app.route("/validar", methods=["POST"])
-def validar():
-    """Endpoint para validar legajo y turno"""
-    try:
-        if not VALIDADOR_DISPONIBLE or not val_legajo or not val_turno:
-            return jsonify({"valido": False, "mensaje": "Servicio de validación no disponible"}), 503
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({"valido": False, "mensaje": "No se enviaron datos"}), 400
-            
-        legajo = data.get("legajo")
-        turno = data.get("turno")
-
-        if not legajo or not turno:
-            return jsonify({"valido": False, "mensaje": "Faltan datos: legajo y turno son requeridos"}), 400
-
-        # Recargar base por si hubo cambios
-        base = cargar_base_empleados()
-        val_legajo_temp = ValidadorLegajo(base)
-        val_turno_temp = ValidadorTurno(base)
-
-        r1 = val_legajo_temp.validar(legajo)
-        if not r1["valido"]:
-            return jsonify(r1)
-
-        r2 = val_turno_temp.validar(legajo, turno)
-        return jsonify(r2)
-        
-    except Exception as e:
-        logger.error(f"Error en validación: {str(e)}")
-        return jsonify({"valido": False, "mensaje": "Error interno del servidor"}), 500
-
-@app.route("/reconocer", methods=["POST"])
-def reconocer():
-    """Endpoint para reconocimiento facial"""
-    try:
-        if not RECONOCIMIENTO_DISPONIBLE:
-            return jsonify({"exito": False, "mensaje": "Servicio de reconocimiento no disponible"}), 503
-            
-        legajo = request.form.get("legajo")
-        turno = request.form.get("turno")
-        imagen_file = request.files.get("imagen")
-
-        if not legajo or not turno:
-            return jsonify({"exito": False, "mensaje": "Faltan datos: legajo y turno son requeridos"}), 400
-
-        if not imagen_file:
-            logger.warning("No se recibió imagen en el request")
-            return jsonify({"exito": False, "mensaje": "No se recibió imagen"}), 400
-
-        try:
-            npimg = np.frombuffer(imagen_file.read(), np.uint8)
-            frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
-            
-            if frame is None:
-                raise ValueError("No se pudo decodificar la imagen")
-                
-        except Exception as e:
-            logger.error(f"Error al procesar imagen: {e}")
-            return jsonify({"exito": False, "mensaje": "Error al procesar imagen"}), 400
-
-        logger.info(f"Imagen recibida correctamente para legajo: {legajo}")
-
-        resultado = reconocer_empleado(frame, legajo)
-        if not resultado.get("coincide", False):
-            return jsonify({"exito": False, "mensaje": "Empleado no reconocido"})
-
-        # Usar DatabaseManager para registrar asistencia si está disponible
-        if DATABASE_MANAGER_DISPONIBLE:
-            try:
-                tipo = "entrada"  # Por simplicidad, siempre entrada por ahora
-                resultado_asistencia = db_manager.registrar_asistencia(legajo, turno, tipo)
-                return jsonify(resultado_asistencia)
-            except Exception as e:
-                logger.error(f"Error registrando asistencia en DB: {e}")
-        
-        # Usar sistema tradicional si DB no está disponible o falló
-        if ASISTENCIA_DISPONIBLE and asistencia:
-            try:
-                tipo = asistencia.obtener_ultimo_tipo(legajo)
-                if not asistencia.puede_registrar_hoy(legajo, tipo):
-                    return jsonify({"exito": False, "mensaje": f"Ya se registró un {tipo.lower()} hoy"})
-
-                estado = asistencia.calcular_puntualidad(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), tipo, turno)
-                if estado == "fuera de turno":
-                    return jsonify({"exito": False, "mensaje": "Fuera de turno"})
-
-                asistencia.registrar(legajo, turno, tipo)
-                return jsonify({"exito": True, "mensaje": f"{tipo} registrado correctamente"})
-            except Exception as e:
-                logger.error(f"Error registrando asistencia tradicional: {e}")
-                return jsonify({"exito": False, "mensaje": "Error registrando asistencia"}), 500
-        else:
-            return jsonify({"exito": False, "mensaje": "Sistema de asistencias no disponible"}), 503
-        
-    except Exception as e:
-        logger.error(f"Error en reconocimiento: {str(e)}")
-        return jsonify({"exito": False, "mensaje": "Error interno del servidor"}), 500
-
-@app.route("/registrar_empleado", methods=["POST"])
-def registrar_empleado():
-    """Endpoint para registrar nuevo empleado"""
-    try:
-        if not EMBEDDING_DISPONIBLE:
-            return jsonify({"exito": False, "mensaje": "Servicio de embedding no disponible"}), 503
-            
-        imagen_file = request.files.get("imagen")
-        legajo = request.form.get("legajo", "").strip()
-        area = request.form.get("area", "").strip()
-        rol = request.form.get("rol", "").strip()
-        turno = request.form.get("turno", "").strip()
-
-        if not imagen_file or not legajo or not area or not rol or not turno:
-            return jsonify({"exito": False, "mensaje": "Faltan datos: imagen, legajo, area, rol y turno son requeridos"}), 400
-
-        # Guardar imagen temporal
-        ruta_temp = f"temp/{legajo}.jpg"
-        imagen_file.save(ruta_temp)
-
-        try:
-            # Usar la función correcta según lo que esté disponible
-            if 'generarEmbedding' in globals():
-                embedding = generarEmbedding(ruta_temp)
-            else:
-                # Si no está disponible, crear un embedding dummy
-                logger.warning("generarEmbedding no disponible, usando embedding dummy")
-                embedding = [0.0] * 128
-        except Exception as e:
-            logger.error(f"Error al procesar imagen: {e}")
-            return jsonify({"exito": False, "mensaje": f"Error al procesar imagen: {str(e)}"}), 500
-        finally:
-            # Limpiar archivo temporal
-            if os.path.exists(ruta_temp):
-                os.remove(ruta_temp)
-
-        if not isinstance(embedding, list) or len(embedding) < 128:
-            return jsonify({"exito": False, "mensaje": "Embedding inválido"}), 400
-
-        # Usar DatabaseManager si está disponible
-        if DATABASE_MANAGER_DISPONIBLE:
-            try:
-                resultado = db_manager.guardar_empleado(legajo, area, rol, turno, embedding)
-                if not resultado["exito"]:
-                    return jsonify(resultado), 400
-                return jsonify(resultado)
-            except Exception as e:
-                logger.error(f"Error guardando en DB: {e}")
-                # Continúa con fallback a JSON
-        
-        # Fallback al sistema JSON tradicional
-        base = cargar_base_empleados()
-        if legajo in base:
-            return jsonify({"exito": False, "mensaje": "Legajo ya registrado"}), 400
-
-        base[legajo] = {
-            "area": area,
-            "rol": rol,
-            "turno": turno,
-            "embedding": embedding
-        }
-
-        ruta_embeddings = "data/embeddings.json"
-        with open(ruta_embeddings, "w") as f:
-            json.dump(base, f, indent=4)
-
-        logger.info(f"Empleado {legajo} registrado correctamente en JSON")
-        return jsonify({"exito": True, "mensaje": "Empleado registrado correctamente"})
-        
-    except Exception as e:
-        logger.error(f"Error en registro de empleado: {str(e)}")
-        return jsonify({"exito": False, "mensaje": "Error interno del servidor"}), 500
-
-@app.route("/ping", methods=["GET"])
+@app.route('/ping')
 def ping():
-    """Endpoint de health check"""
-    logger.info("Recibí un ping desde el cliente")
-    return jsonify({
-        "mensaje": "Conexión OK",
-        "timestamp": datetime.now().isoformat(),
-        "status": "healthy",
-        "database_available": DATABASE_MANAGER_DISPONIBLE
-    })
-
-@app.route("/empleados", methods=["GET"])
-def listar_empleados():
-    """Endpoint para listar empleados registrados"""
+    print("INFO: Recibí un ping desde el cliente")
     try:
-        base = cargar_base_empleados()
-        empleados = []
+        empleados_count = database_manager.contar_empleados()
+        return jsonify({
+            "mensaje": "pong",
+            "timestamp": datetime.now().isoformat(),
+            "empleados": empleados_count,
+            "reconocimiento": RECONOCIMIENTO_DISPONIBLE
+        })
+    except Exception as e:
+        print(f"ERROR consultando PostgreSQL: {e}")
+        return jsonify({
+            "mensaje": "pong",
+            "timestamp": datetime.now().isoformat(),
+            "empleados": 0,
+            "reconocimiento": RECONOCIMIENTO_DISPONIBLE,
+            "db_error": str(e)
+        })
+
+@app.route('/validar', methods=['POST'])
+def validar_empleado():
+    try:
+        data = request.get_json()
+        legajo = data.get('legajo')
+        turno = data.get('turno')
         
-        for legajo, datos in base.items():
-            empleados.append({
-                "legajo": legajo,
-                "area": datos.get("area", ""),
-                "rol": datos.get("rol", ""),
-                "turno": datos.get("turno", ""),
-                "tiene_embedding": "embedding" in datos
-            })
+        if not legajo or not turno:
+            return jsonify({"error": "Legajo y turno son requeridos"}), 400
+        
+        # Validar legajo
+        legajo_valido = validador_legajo.validar(legajo)
+        if not legajo_valido:
+            return jsonify({"error": "Legajo no válido"}), 404
+        
+        # Validar turno
+        turno_valido = validador_turno.validar(legajo, turno)
+        if not turno_valido:
+            return jsonify({"error": "Turno no válido para este empleado"}), 400
+        
+        return jsonify({
+            "legajo": legajo,
+            "turno": turno,
+            "valido": True
+        })
+        
+    except Exception as e:
+        print(f"ERROR en validar_empleado: {e}")
+        return jsonify({"error": "Error interno del servidor"}), 500
+
+@app.route('/registrar_empleado', methods=['POST'])
+def registrar_empleado():
+    try:
+        # Obtener datos del formulario
+        legajo = request.form.get('legajo')
+        area = request.form.get('area') 
+        rol = request.form.get('rol')
+        turno = request.form.get('turno')
+        
+        # La imagen puede venir como file o como string base64
+        imagen_file = request.files.get('imagen')
+        imagen_base64 = request.form.get('imagen')
+        
+        # Usar la imagen que esté disponible
+        imagen = imagen_file if imagen_file else imagen_base64
+        
+        # Validar campos obligatorios
+        if not all([legajo, area, rol, turno]):
+            return jsonify({"error": "Faltan campos obligatorios"}), 400
             
-        return jsonify({
-            "exito": True,
-            "empleados": empleados,
-            "total": len(empleados),
-            "using_database": DATABASE_MANAGER_DISPONIBLE
-        })
+        # Verificar si el legajo ya existe
+        if database_manager.empleado_existe(legajo):
+            return jsonify({"error": "El empleado ya existe"}), 409
+            
+        if RECONOCIMIENTO_DISPONIBLE and imagen:
+            # Generar embedding de la imagen
+            embedding = generarEmbedding(imagen)
+            if embedding is None:
+                return jsonify({"exito": False, "mensaje": "Embedding inválido"}), 400
+        else:
+            # Usar embedding dummy si no hay reconocimiento o imagen
+            embedding = [0.0] * 128
+            
+        # Registrar empleado en la base de datos
+        resultado = database_manager.registrar_empleado(
+            legajo=legajo,
+            area=area,
+            rol=rol, 
+            turno=turno,
+            embedding=embedding
+        )
         
-    except Exception as e:
-        logger.error(f"Error al listar empleados: {str(e)}")
-        return jsonify({"exito": False, "mensaje": "Error interno del servidor"}), 500
-
-@app.route("/dashboard", methods=["GET"])
-def dashboard_data():
-    """Endpoint que devuelve datos para el dashboard"""
-    try:
-        if DATABASE_MANAGER_DISPONIBLE:
-            # Obtener datos desde PostgreSQL
-            try:
-                from models.database import get_db_session, Empleado, Asistencia
-                session = get_db_session()
-                if session:
-                    try:
-                        # Contar empleados totales
-                        total_empleados = session.query(Empleado).count()
-                        
-                        # Contar asistencias de hoy
-                        hoy = date.today().strftime("%Y-%m-%d")
-                        asistencias_hoy = session.query(Asistencia).filter(
-                            Asistencia.fecha == hoy
-                        ).count()
-                        
-                        # Empleados por turno
-                        empleados_manana = session.query(Empleado).filter(
-                            Empleado.turno == "mañana"
-                        ).count()
-                        empleados_tarde = session.query(Empleado).filter(
-                            Empleado.turno == "tarde"
-                        ).count()
-                        empleados_noche = session.query(Empleado).filter(
-                            Empleado.turno == "noche"
-                        ).count()
-                        
-                        # Obtener asistencias de los últimos 7 días
-                        from datetime import datetime, timedelta
-                        hace_7_dias = datetime.now() - timedelta(days=7)
-                        
-                        asistencias_semana = []
-                        for i in range(7):
-                            fecha_consulta = (hace_7_dias + timedelta(days=i)).strftime("%Y-%m-%d")
-                            count = session.query(Asistencia).filter(
-                                Asistencia.fecha == fecha_consulta
-                            ).count()
-                            asistencias_semana.append({
-                                "fecha": fecha_consulta,
-                                "count": count
-                            })
-                        
-                        session.close()
-                        
-                        return jsonify({
-                            "exito": True,
-                            "totalEmpleados": total_empleados,
-                            "asistenciasHoy": asistencias_hoy,
-                            "empleadosPorTurno": {
-                                "mañana": empleados_manana,
-                                "tarde": empleados_tarde,
-                                "noche": empleados_noche
-                            },
-                            "asistenciasSemana": asistencias_semana,
-                            "fuente": "PostgreSQL"
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"Error consultando PostgreSQL: {e}")
-                        session.close()
-            except ImportError as e:
-                logger.error(f"Error importando modelos de DB: {e}")
-                    
-        # Si no hay PostgreSQL, usar datos simulados basados en JSON
-        base = cargar_base_empleados()
-        total_empleados = len(base)
-        
-        # Contar por turnos desde JSON
-        turnos = {"mañana": 0, "tarde": 0, "noche": 0}
-        for empleado_data in base.values():
-            turno = empleado_data.get("turno", "").lower()
-            if turno in turnos:
-                turnos[turno] += 1
-        
-        # Datos simulados para la semana
-        asistencias_semana = []
-        from datetime import datetime, timedelta
-        for i in range(7):
-            fecha = (datetime.now() - timedelta(days=6-i)).strftime("%Y-%m-%d")
-            # Simular datos basados en número de empleados
-            count = max(1, total_empleados // 2 + (i % 3))
-            asistencias_semana.append({
-                "fecha": fecha,
-                "count": count
-            })
-        
-        return jsonify({
-            "exito": True,
-            "totalEmpleados": total_empleados,
-            "asistenciasHoy": max(1, total_empleados // 2),
-            "empleadosPorTurno": turnos,
-            "asistenciasSemana": asistencias_semana,
-            "fuente": "JSON/Simulado"
-        })
-        
-    except Exception as e:
-        logger.error(f"Error en dashboard: {str(e)}")
-        return jsonify({
-            "exito": False,
-            "mensaje": "Error obteniendo datos del dashboard"
-        }), 500
-
-@app.route("/asistencias/<legajo>", methods=["GET"])
-def obtener_asistencias(legajo):
-    """Endpoint para obtener asistencias de un empleado"""
-    try:
-        if DATABASE_MANAGER_DISPONIBLE:
-            # Usar PostgreSQL si está disponible
-            # Por ahora retornar placeholder hasta implementar en DatabaseManager
+        if resultado:
+            # Actualizar validadores con el nuevo empleado
+            empleados_actualizados = database_manager.obtener_todos_empleados()
+            global validador_legajo, validador_turno
+            validador_legajo = ValidadorLegajo(empleados_actualizados)
+            validador_turno = ValidadorTurno(empleados_actualizados)
+            
             return jsonify({
                 "exito": True,
+                "mensaje": "Empleado registrado exitosamente",
                 "legajo": legajo,
-                "asistencias": [],
-                "mensaje": "Funcionalidad en desarrollo con PostgreSQL"
+                "modo": "con_reconocimiento" if RECONOCIMIENTO_DISPONIBLE and imagen else "sin_reconocimiento"
+            }), 201
+        else:
+            return jsonify({"exito": False, "mensaje": "Error al registrar empleado en la base de datos"}), 500
+            
+    except Exception as e:
+        print(f"ERROR en registrar_empleado: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"exito": False, "mensaje": f"Error interno: {str(e)}"}), 500
+
+@app.route('/reconocer', methods=['POST'])
+def reconocer():
+    try:
+        if not RECONOCIMIENTO_DISPONIBLE:
+            return jsonify({"error": "Servicio de reconocimiento no disponible"}), 503
+            
+        # Obtener datos
+        legajo = request.form.get('legajo')
+        turno = request.form.get('turno')
+        imagen = request.files.get('imagen')
+        
+        if not all([legajo, turno, imagen]):
+            return jsonify({"error": "Legajo, turno e imagen son requeridos"}), 400
+        
+        # Validar legajo y turno
+        if not validador_legajo.validar(legajo):
+            return jsonify({"error": "Legajo no válido"}), 404
+            
+        if not validador_turno.validar(legajo, turno):
+            return jsonify({"error": "Turno no válido"}), 400
+        
+        # Obtener embeddings de todos los empleados
+        empleados_embeddings = {}
+        empleados = database_manager.obtener_todos_empleados()
+        for empleado in empleados:
+            empleados_embeddings[empleado['legajo']] = empleado['embedding']
+        
+        # Reconocer empleado
+        empleado_reconocido, distancia = reconocer_empleado(imagen, empleados_embeddings)
+        
+        if empleado_reconocido == legajo:
+            # Registrar asistencia
+            resultado = registrar_asistencias.registrar(legajo, turno)
+            
+            return jsonify({
+                "legajo": legajo,
+                "reconocido": True,
+                "distancia": distancia,
+                "asistencia_registrada": resultado,
+                "timestamp": datetime.now().isoformat()
             })
         else:
-            # Usar sistema JSON tradicional
-            if ASISTENCIA_DISPONIBLE and asistencia:
-                registros = asistencia.obtener_asistencias_empleado(legajo)
-                return jsonify({
-                    "exito": True,
-                    "legajo": legajo,
-                    "asistencias": registros
-                })
-            else:
-                return jsonify({"exito": False, "mensaje": "Servicio de asistencias no disponible"}), 503
-                
+            return jsonify({
+                "legajo": legajo,
+                "reconocido": False,
+                "distancia": distancia,
+                "empleado_detectado": empleado_reconocido
+            }), 403
+            
     except Exception as e:
-        logger.error(f"Error al obtener asistencias: {str(e)}")
-        return jsonify({"exito": False, "mensaje": "Error interno del servidor"}), 500
+        print(f"ERROR en reconocer: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+@app.route('/empleados', methods=['GET'])
+def obtener_empleados():
+    try:
+        empleados = database_manager.obtener_todos_empleados()
+        
+        # Remover embeddings de la respuesta (son muy largos)
+        empleados_sin_embedding = []
+        for emp in empleados:
+            emp_limpio = {k: v for k, v in emp.items() if k != 'embedding'}
+            empleados_sin_embedding.append(emp_limpio)
+            
+        return jsonify({
+            "empleados": empleados_sin_embedding,
+            "total": len(empleados_sin_embedding)
+        })
+        
+    except Exception as e:
+        print(f"ERROR en obtener_empleados: {e}")
+        return jsonify({"error": "Error interno del servidor"}), 500
+
+@app.route('/asistencias/<legajo>', methods=['GET'])
+def obtener_asistencias(legajo):
+    try:
+        if not validador_legajo.validar(legajo):
+            return jsonify({"error": "Legajo no válido"}), 404
+            
+        asistencias = registrar_asistencias.obtener_asistencias_empleado(legajo)
+        
+        return jsonify({
+            "legajo": legajo,
+            "asistencias": asistencias,
+            "total": len(asistencias)
+        })
+        
+    except Exception as e:
+        print(f"ERROR en obtener_asistencias: {e}")
+        return jsonify({"error": "Error interno del servidor"}), 500
 
 @app.errorhandler(404)
 def not_found(error):
@@ -494,19 +276,9 @@ def not_found(error):
 
 @app.errorhandler(500)
 def internal_error(error):
-    logger.error(f"Error interno del servidor: {error}")
+    print(f"ERROR interno del servidor: {error}")
     return jsonify({"error": "Error interno del servidor"}), 500
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    debug = os.environ.get("FLASK_ENV") != "production"
-    
-    logger.info(f"Iniciando aplicación en puerto {port}")
-    logger.info(f"Modo debug: {debug}")
-    logger.info(f"DatabaseManager disponible: {DATABASE_MANAGER_DISPONIBLE}")
-    logger.info(f"Reconocimiento disponible: {RECONOCIMIENTO_DISPONIBLE}")
-    logger.info(f"Embedding disponible: {EMBEDDING_DISPONIBLE}")
-    logger.info(f"Validadores disponibles: {VALIDADOR_DISPONIBLE}")
-    logger.info(f"Asistencias disponibles: {ASISTENCIA_DISPONIBLE}")
-    
-    app.run(host="0.0.0.0", port=port, debug=debug)
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
