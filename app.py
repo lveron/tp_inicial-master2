@@ -4,7 +4,6 @@ import os
 from datetime import datetime
 
 # Imports de los módulos locales
-from models.database import init_db
 from persistencia.databaseManager import DatabaseManager
 from validarEmpleado.validarLegajo import ValidadorLegajo
 from validarEmpleado.validarTurno import ValidadorTurno
@@ -23,9 +22,6 @@ except Exception as e:
 
 app = Flask(__name__)
 CORS(app)
-
-# Inicializar base de datos
-init_db()
 
 # Inicializar managers
 database_manager = DatabaseManager()
